@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+python-multipart
+pydantic
+requests
+beautifulsoup4
+PyPDF2
+faiss-cpu
+langchain
+langchain-community
+sentence-transformers
+tqdm
+serpapi
+python-dotenv

@@ -1,0 +1,4 @@
+python -m venv venv
+.\venv\Scripts\Activate
+
+python -m uvicorn app.main:app --reload
