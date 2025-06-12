@@ -32,3 +32,5 @@ backend/app/services/__pycache__
 diagnostics_backend 
 backend/venv
 frontend/node_modules
+__pycache__
+backend/agents/__pycache__
