@@ -605,7 +605,21 @@ class MedicalDiagnosticAgent:
             emergency_indicators=['Any sudden worsening of symptoms'],
             follow_up='Seek medical consultation as soon as possible'
         )
+import requests
+gemini_key = os.getenv("GEMINI_API_KEY")
+google_key = os.getenv("GOOGLE_API_KEY")         # optional
+google_cse_id = os.getenv("GOOGLE_CSE_ID") 
 
+# url = "https://www.googleapis.com/customsearch/v1"
+# params = {
+#     "q": "test search",
+#     "key": google_key,
+#     "cx": google_cse_id
+# }
+
+# response = requests.get(url, params=params)
+# print(response.status_code)
+# print(response.json())
 async def main():
     # Load your API keys from environment (or set them here directly)
     gemini_key = os.getenv("GEMINI_API_KEY")

@@ -1,15 +1,28 @@
-import { FC, useState, useRef } from 'react';
+import { FC, useState, useRef, useEffect } from 'react';
 import MainLayout from '../components/layout/MainLayout';
 
+interface ChatMessage {
+  role: 'user' | 'ai';
+  content: string;
+  sources?: string[];
+}
+
 const AskAIPage: FC = () => {
-  const [messages, setMessages] = useState<{ role: 'user' | 'ai'; content: string }[]>([
-    { role: 'ai', content: 'Hello! I\'m MediMind AI. How can I assist you with your medical questions today?' }
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    { 
+      role: 'ai', 
+      content: 'Hello! I\'m MediMind AI. How can I assist you with your medical questions today?' 
+    }
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showFaqs, setShowFaqs] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Backend API base URL - adjust this to match your backend URL
+  const API_BASE_URL = 'http://127.0.0.1:8000';
 
   // Sample FAQs
   const faqs = [
@@ -24,27 +37,94 @@ const AskAIPage: FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  const sendMessageToBackend = async (message: string, conversationHistory: ChatMessage[]): Promise<{ response: string; sources?: string[] }> => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: message,
+          conversation_history: conversationHistory.map(msg => ({
+            role: msg.role,
+            content: msg.content
+          }))
+        }),
+      });
+
+      if (!response.ok) {
+        if (response.status === 503) {
+          throw new Error('Medical AI service is currently unavailable. Please try again later.');
+        } else if (response.status >= 500) {
+          throw new Error('Server error occurred. Please try again later.');
+        } else if (response.status >= 400) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.detail || 'Invalid request. Please check your input.');
+        } else {
+          throw new Error('An unexpected error occurred. Please try again.');
+        }
+      }
+
+      const data = await response.json();
+      return {
+        response: data.response,
+        sources: data.sources
+      };
+    } catch (error) {
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        throw new Error('Unable to connect to the medical AI service. Please check your internet connection and try again.');
+      }
+      throw error;
+    }
+  };
+
   const handleSendMessage = async () => {
     if (!input.trim()) return;
 
+    // Clear any previous errors
+    setError(null);
+
     // Add user message
-    const userMessage = { role: 'user' as const, content: input };
-    setMessages(prev => [...prev, userMessage]);
+    const userMessage: ChatMessage = { role: 'user', content: input };
+    const updatedMessages = [...messages, userMessage];
+    setMessages(updatedMessages);
     setInput('');
     setShowFaqs(false);
     setIsLoading(true);
 
-    // Simulate AI response (in a real app, this would be an API call)
-    setTimeout(() => {
-      // Example response - in production, this would come from your backend
-      const aiResponse = {
-        role: 'ai' as const,
-        content: `Thank you for your question about "${input}". This is a simulated response. In the actual application, I would provide medically accurate information based on your query.`
+    try {
+      // Send message to backend
+      const result = await sendMessageToBackend(input, messages);
+      
+      // Add AI response
+      const aiResponse: ChatMessage = {
+        role: 'ai',
+        content: result.response,
+        sources: result.sources
       };
+      
       setMessages(prev => [...prev, aiResponse]);
+    } catch (error) {
+      console.error('Error sending message:', error);
+      
+      const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
+      setError(errorMessage);
+      
+      // Add error message to chat
+      const errorResponse: ChatMessage = {
+        role: 'ai',
+        content: `I apologize, but I encountered an error: ${errorMessage}. Please try again or contact support if the problem persists.`
+      };
+      
+      setMessages(prev => [...prev, errorResponse]);
+    } finally {
       setIsLoading(false);
-      scrollToBottom();
-    }, 1000);
+    }
   };
 
   const handleFaqClick = (faq: string) => {
@@ -54,20 +134,46 @@ const AskAIPage: FC = () => {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
-      // In a real app, you would handle file upload to your backend
+      // For now, we'll just show a message about file upload
+      // You can implement file upload to your backend later
       const fileName = files[0].name;
-      setMessages(prev => [
-        ...prev,
-        { role: 'user', content: `Uploaded file: ${fileName}` },
-        { role: 'ai', content: `I've received your file "${fileName}". What specific questions do you have about this medical report?` }
-      ]);
+      const fileMessage: ChatMessage = {
+        role: 'user', 
+        content: `Uploaded file: ${fileName}`
+      };
+      const aiResponse: ChatMessage = {
+        role: 'ai', 
+        content: `I've received your file "${fileName}". Currently, file analysis is handled through the diagnostic endpoint. For now, please describe what specific questions you have about this medical report, and I'll do my best to provide general guidance.`
+      };
+      
+      setMessages(prev => [...prev, fileMessage, aiResponse]);
       setShowFaqs(false);
-      scrollToBottom();
     }
   };
 
   const triggerFileUpload = () => {
     fileInputRef.current?.click();
+  };
+
+  const renderMessageContent = (message: ChatMessage) => {
+    return (
+      <div>
+        <div className="whitespace-pre-wrap">{message.content}</div>
+        {message.sources && message.sources.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-gray-200">
+            <p className="text-xs font-medium text-gray-600 mb-2">Sources:</p>
+            <ul className="text-xs text-gray-500 space-y-1">
+              {message.sources.map((source, index) => (
+                <li key={index} className="flex items-start">
+                  <span className="mr-2">•</span>
+                  <span>{source}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -83,6 +189,16 @@ const AskAIPage: FC = () => {
           </p>
         </div>
 
+        {/* Error Display */}
+        {error && (
+          <div className="mx-4 mt-4 p-3 bg-red-50 border border-red-200 rounded-md">
+            <div className="flex">
+              <div className="text-red-500 mr-2">⚠️</div>
+              <div className="text-sm text-red-700">{error}</div>
+            </div>
+          </div>
+        )}
+
         {/* Message Area */}
         <div className="flex-grow p-4 overflow-y-auto bg-gray-50">
           {messages.map((message, index) => (
@@ -96,17 +212,20 @@ const AskAIPage: FC = () => {
                     : 'bg-white text-gray-800 shadow rounded-tl-none border border-gray-200'
                   }`}
               >
-                {message.content}
+                {renderMessageContent(message)}
               </div>
             </div>
           ))}
           {isLoading && (
             <div className="flex justify-start mb-4">
               <div className="bg-white text-gray-500 p-3 rounded-lg shadow rounded-tl-none border border-gray-200">
-                <div className="flex space-x-2">
-                  <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce"></div>
-                  <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                  <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+                <div className="flex items-center space-x-2">
+                  <div className="flex space-x-1">
+                    <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce"></div>
+                    <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                    <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+                  </div>
+                  <span className="text-sm text-gray-500">MediMind AI is thinking...</span>
                 </div>
               </div>
             </div>
@@ -123,7 +242,7 @@ const AskAIPage: FC = () => {
                 <button
                   key={index}
                   onClick={() => handleFaqClick(faq)}
-                  className="bg-white border border-gray-300 text-gray-700 text-sm px-3 py-1 rounded-full hover:bg-gray-50"
+                  className="bg-white border border-gray-300 text-gray-700 text-sm px-3 py-1 rounded-full hover:bg-gray-50 transition-colors"
                 >
                   {faq}
                 </button>
@@ -137,7 +256,7 @@ const AskAIPage: FC = () => {
           <div className="flex items-center">
             <button
               onClick={triggerFileUpload}
-              className="p-2 text-gray-500 hover:text-blue-600 focus:outline-none"
+              className="p-2 text-gray-500 hover:text-blue-600 focus:outline-none transition-colors"
               title="Upload medical report"
             >
               📎
@@ -153,19 +272,20 @@ const AskAIPage: FC = () => {
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+              onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleSendMessage()}
               placeholder="Ask a medical question or upload your report..."
               className="flex-grow p-2 border border-gray-300 rounded-l-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={isLoading}
             />
             <button
               onClick={handleSendMessage}
-              disabled={!input.trim()}
-              className={`p-2 px-4 rounded-r-md ${input.trim()
+              disabled={!input.trim() || isLoading}
+              className={`p-2 px-4 rounded-r-md transition-colors ${input.trim() && !isLoading
                   ? 'bg-blue-600 text-white hover:bg-blue-700'
                   : 'bg-gray-300 text-gray-500 cursor-not-allowed'
                 }`}
             >
-              Send
+              {isLoading ? 'Sending...' : 'Send'}
             </button>
           </div>
 
@@ -191,6 +311,7 @@ const AskAIPage: FC = () => {
             <div
               key={index}
               className="bg-blue-50 border border-blue-100 p-4 rounded-lg hover:bg-blue-100 cursor-pointer transition-colors"
+              onClick={() => handleFaqClick(`Tell me about ${topic.toLowerCase()}`)}
             >
               <h3 className="font-medium text-blue-800">{topic}</h3>
               <p className="text-xs text-gray-600 mt-1">Common questions and information</p>
