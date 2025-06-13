@@ -2,7 +2,7 @@ import { Routes, Route } from 'react-router-dom';
 import HomePage from './pages/HomePage';
 import Diagnostics from './pages/Diagnostics';
 import AskAIPage from './pages/AskAIPage';
-import HospitaOperationsPage from './pages/HospitaOperationsPage';
+import HospitaOperationsPage from './pages/HospitalOperationsPage';
 
 function App() {
   return (
