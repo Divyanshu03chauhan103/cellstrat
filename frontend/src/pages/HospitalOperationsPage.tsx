@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { FC } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell, LineChart, Line, ResponsiveContainer, Area, XAxis as RechartsXAxis, YAxis as RechartsYAxis } from 'recharts';
-import { Users, Bed, AlertTriangle, UserCheck, FileText, Activity, TrendingUp, Calendar, Heart, Thermometer } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell, LineChart, Line, ResponsiveContainer } from 'recharts';
+import { Users, Bed, AlertTriangle, UserCheck, FileText, Activity, TrendingUp, Calendar, Heart, Thermometer, BedDouble } from 'lucide-react';
 import * as Papa from 'papaparse';
 import { useNavigate } from 'react-router-dom';
 import MainLayout from '../components/layout/MainLayout';
-
 
 type Patient = {
   name: string;
@@ -29,16 +28,20 @@ type Patient = {
 
 type CsvPatientRow = {
   name: string;
-  age: string; // CSV values come in as strings
+  age: string | number;
   gender: string;
   bedNumber?: string;
+  bed_number?: string; // CSV column name
   bedType?: string;
+  bed_type?: string; // Alternative CSV column name
   status?: string;
   priority?: string;
   admissionDate?: string;
+  admission_date?: string; // CSV column name
   symptoms?: string;
   medicalHistory?: string;
-  vitals?: string; // Comes as stringified JSON
+  medical_history?: string; // CSV column name
+  vitals?: string;
   diagnosis?: string;
   department?: string;
 };
@@ -53,9 +56,6 @@ type PatientModalProps = {
   onClose: () => void;
 };
 
-
-
-
 const HospitalManagementAgent = () => {
   const navigate = useNavigate();
   const [csvData, setCsvData] = useState<Patient[]>([]);
@@ -69,20 +69,12 @@ const HospitalManagementAgent = () => {
     priority: 'normal',
     admissionDate: '',
     symptoms: '',
-    medicalHistory: ''
+    medicalHistory: '',
+    department: '' // Added missing department field
   });
-  const [selectedPatient, setSelectedPatient] = useState(null);
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null); // Fixed type
   const [showAddForm, setShowAddForm] = useState(false);
   const [activeView, setActiveView] = useState('dashboard');
-  const [hospitalStats, setHospitalStats] = useState({
-    totalBeds: 200,
-    occupiedBeds: 150,
-    availableBeds: 50,
-    totalPatients: 150,
-    unattendedPatients: 12,
-    criticalPatients: 8,
-    outpatients: 45
-  });
 
   // Sample data for demonstration
   const sampleData: Patient[] = [
@@ -162,17 +154,22 @@ const HospitalManagementAgent = () => {
       Papa.parse<CsvPatientRow>(file, {
         header: true,
         skipEmptyLines: true,
+        dynamicTyping: true,
+        delimitersToGuess: [',', '\t', '|', ';'],
         complete: (result: Papa.ParseResult<CsvPatientRow>) => {
           const processedData: Patient[] = result.data
             .filter((row: CsvPatientRow) => row.name && row.name.trim() !== '')
             .map((row: CsvPatientRow): Patient => {
+              // Handle both bed_number and bedNumber column names
+              const bedNumber = row.bedNumber || row.bed_number || 'N/A';
+              
               return {
-                name: row.name,
-                age: parseInt(row.age) || 0,
-                gender: row.gender,
-                bedNumber: row.bedNumber || 'N/A',
-                bedType: validBedTypes.includes(row.bedType as any)
-                  ? (row.bedType as Patient['bedType'])
+                name: row.name.trim(),
+                age: parseInt(String(row.age)) || 0,
+                gender: row.gender || 'Not specified',
+                bedNumber: bedNumber,
+                bedType: validBedTypes.includes(row.bedType as any) || validBedTypes.includes(row.bed_type as any)
+                  ? ((row.bedType || row.bed_type) as Patient['bedType'])
                   : 'general',
                 status: validStatuses.includes(row.status as any)
                   ? (row.status as Patient['status'])
@@ -180,11 +177,11 @@ const HospitalManagementAgent = () => {
                 priority: validPriorities.includes(row.priority as any)
                   ? (row.priority as Patient['priority'])
                   : 'normal',
-                admissionDate: row.admissionDate || new Date().toISOString().slice(0, 10),
+                admissionDate: row.admissionDate || row.admission_date || new Date().toISOString().slice(0, 10),
                 symptoms: row.symptoms || '',
-                medicalHistory: row.medicalHistory || '',
+                medicalHistory: row.medicalHistory || row.medical_history || '',
                 vitals: row.vitals
-                  ? JSON.parse(row.vitals)
+                  ? (typeof row.vitals === 'string' ? JSON.parse(row.vitals) : row.vitals)
                   : { temperature: 37, heartRate: 72, bloodPressure: '120/80' },
                 diagnosis: row.diagnosis || 'Pending diagnosis',
                 department: row.department || 'General'
@@ -192,19 +189,43 @@ const HospitalManagementAgent = () => {
             });
 
           setCsvData(processedData);
+          console.log(`Loaded ${processedData.length} patients from CSV`);
+        },
+        error: (error) => {
+          console.error('CSV parsing error:', error);
+          alert('Error parsing CSV file. Please check the format.');
         }
       });
+    } else {
+      alert('Please select a valid CSV file.');
     }
   };
 
-
   const addCustomPatient = () => {
     if (customPatient.name.trim()) {
+      // Generate a unique bed number if not provided
+      const generateBedNumber = (): string => {
+        const floors = ['A', 'B', 'C', 'D'];
+        const existingBeds = csvData.map(p => p.bedNumber).filter(bed => bed !== 'N/A');
+        let bedNumber = '';
+        
+        for (let floor of floors) {
+          for (let room = 101; room <= 399; room++) {
+            bedNumber = `${floor}${room}`;
+            if (!existingBeds.includes(bedNumber)) {
+              return bedNumber;
+            }
+          }
+        }
+        
+        return `TEMP${Date.now()}`;
+      };
+
       const newPatient: Patient = {
-        name: customPatient.name,
+        name: customPatient.name.trim(),
         age: parseInt(customPatient.age) || 0,
         gender: customPatient.gender || 'Not specified',
-        bedNumber: customPatient.bedNumber || 'N/A',
+        bedNumber: customPatient.bedNumber || generateBedNumber(),
         bedType: ['general', 'semi-private', 'private'].includes(customPatient.bedType)
           ? (customPatient.bedType as Patient['bedType'])
           : 'general',
@@ -223,7 +244,7 @@ const HospitalManagementAgent = () => {
           bloodPressure: '120/80'
         },
         diagnosis: 'Pending diagnosis - requires evaluation',
-        department: 'General'
+        department: customPatient.department || 'General'
       };
 
       setCsvData([...csvData, newPatient]);
@@ -238,13 +259,13 @@ const HospitalManagementAgent = () => {
         priority: 'normal',
         admissionDate: '',
         symptoms: '',
-        medicalHistory: ''
+        medicalHistory: '',
+        department: ''
       });
 
       setShowAddForm(false);
     }
   };
-
 
   const getDashboardStats = useMemo(() => {
     const stats = csvData.reduce((acc, patient) => {
@@ -253,14 +274,28 @@ const HospitalManagementAgent = () => {
       if (patient.status === 'outpatient') acc.outpatients++;
       if (patient.priority === 'critical') acc.critical++;
       if (patient.priority === 'urgent') acc.urgent++;
+      
+      // Count occupied beds (only for inpatients with valid bed numbers)
+      if (patient.status === 'inpatient' && patient.bedNumber !== 'N/A') {
+        acc.occupiedBeds++;
+      }
+      
       return acc;
-    }, { total: 0, inpatients: 0, outpatients: 0, critical: 0, urgent: 0 });
+    }, { 
+      total: 0, 
+      inpatients: 0, 
+      outpatients: 0, 
+      critical: 0, 
+      urgent: 0,
+      occupiedBeds: 0
+    });
 
     return [
       { name: 'Total Patients', value: stats.total, color: '#3B82F6', icon: Users },
       { name: 'Inpatients', value: stats.inpatients, color: '#10B981', icon: Bed },
       { name: 'Outpatients', value: stats.outpatients, color: '#F59E0B', icon: UserCheck },
-      { name: 'Critical Cases', value: stats.critical, color: '#EF4444', icon: AlertTriangle }
+      { name: 'Critical Cases', value: stats.critical, color: '#EF4444', icon: AlertTriangle },
+      { name: 'Occupied Beds', value: stats.occupiedBeds, color: '#8B5CF6', icon: BedDouble }
     ];
   }, [csvData]);
 
@@ -282,17 +317,23 @@ const HospitalManagementAgent = () => {
     }));
   }, [csvData]);
 
+  // Fixed department stats function
   const getDepartmentStats = useMemo(() => {
     const deptCount: Record<string, number> = csvData.reduce((acc, patient) => {
       const dept = patient.department || 'General';
       acc[dept] = (acc[dept] || 0) + 1;
       return acc;
-    }, {} as Record<string, number>); // 👈 assert the empty object type here
+    }, {} as Record<string, number>);
 
-    return Object.entries(deptCount).map(([dept, count]) => ({
-      name: dept,
-      value: count
-    }));
+    return Object.entries(deptCount)
+      .map(([department, patients]) => ({
+        department,
+        patients,
+        name: department, // For chart compatibility
+        value: patients,  // For chart compatibility
+        color: `hsl(${Math.floor(Math.random() * 360)}, 70%, 50%)`
+      }))
+      .sort((a, b) => b.patients - a.patients);
   }, [csvData]);
 
   const getAgeDistribution = useMemo(() => {
@@ -313,21 +354,67 @@ const HospitalManagementAgent = () => {
     }));
   }, [csvData]);
 
+  // Additional utility functions
+  const getBedOccupancyByType = useMemo(() => {
+    const bedTypeCount: Record<string, { total: number; occupied: number }> = {
+      general: { total: 0, occupied: 0 },
+      'semi-private': { total: 0, occupied: 0 },
+      private: { total: 0, occupied: 0 }
+    };
+
+    csvData.forEach((patient) => {
+      if (patient.status === 'inpatient' && patient.bedNumber !== 'N/A') {
+        bedTypeCount[patient.bedType].occupied++;
+      }
+    });
+
+    // Assuming total bed capacity (you may want to make this configurable)
+    bedTypeCount.general.total = 50;
+    bedTypeCount['semi-private'].total = 20;
+    bedTypeCount.private.total = 10;
+
+    return Object.entries(bedTypeCount).map(([bedType, stats]) => ({
+      bedType,
+      occupied: stats.occupied,
+      total: stats.total,
+      occupancyRate: stats.total > 0 ? (stats.occupied / stats.total) * 100 : 0
+    }));
+  }, [csvData]);
+
+  const getDepartmentBedDistribution = useMemo(() => {
+    const deptBeds = csvData
+      .filter(patient => patient.status === 'inpatient' && patient.bedNumber !== 'N/A')
+      .reduce((acc, patient) => {
+        const dept = patient.department || 'General';
+        if (!acc[dept]) acc[dept] = [];
+        acc[dept].push(patient.bedNumber);
+        return acc;
+      }, {} as Record<string, string[]>);
+
+    return Object.entries(deptBeds).map(([department, beds]) => ({
+      department,
+      bedsOccupied: beds.length,
+      bedNumbers: beds.sort()
+    }));
+  }, [csvData]);
+
   const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
 
   const PatientCard: FC<PatientCardProps> = ({ patient, onClick }) => (
     <div
-      className={`bg-white rounded-lg shadow-md p-4 cursor-pointer hover:shadow-lg transition-shadow border-l-4 ${patient.priority === 'critical' ? 'border-red-500' :
+      className={`bg-white rounded-lg shadow-md p-4 cursor-pointer hover:shadow-lg transition-shadow border-l-4 ${
+        patient.priority === 'critical' ? 'border-red-500' :
         patient.priority === 'urgent' ? 'border-yellow-500' : 'border-green-500'
-        }`}
+      }`}
       onClick={() => onClick(patient)}
     >
       <div className="flex justify-between items-start mb-2">
         <h3 className="font-semibold text-lg text-gray-800">{patient.name}</h3>
-        <span className={`px-2 py-1 rounded-full text-xs font-medium ${patient.priority === 'critical' ? 'bg-red-100 text-red-800' :
+        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+          patient.priority === 'critical' ? 'bg-red-100 text-red-800' :
           patient.priority === 'urgent' ? 'bg-yellow-100 text-yellow-800' :
-            'bg-green-100 text-green-800'
-          }`}>
+          'bg-green-100 text-green-800'
+        }`}>
           {patient.priority}
         </span>
       </div>
@@ -350,7 +437,7 @@ const HospitalManagementAgent = () => {
               onClick={onClose}
               className="text-gray-500 hover:text-gray-700 text-xl font-bold"
             >
-              
+              ×
             </button>
           </div>
 
@@ -363,10 +450,11 @@ const HospitalManagementAgent = () => {
                   <p><strong>Gender:</strong> {patient.gender}</p>
                   <p><strong>Bed Number:</strong> {patient.bedNumber || 'N/A'}</p>
                   <p><strong>Status:</strong> {patient.status}</p>
-                  <p><strong>Priority:</strong> <span className={`font-medium ${patient.priority === 'critical' ? 'text-red-600' :
+                  <p><strong>Priority:</strong> <span className={`font-medium ${
+                    patient.priority === 'critical' ? 'text-red-600' :
                     patient.priority === 'urgent' ? 'text-yellow-600' :
-                      'text-green-600'
-                    }`}>{patient.priority}</span></p>
+                    'text-green-600'
+                  }`}>{patient.priority}</span></p>
                   <p><strong>Department:</strong> {patient.department}</p>
                   <p><strong>Admission Date:</strong> {patient.admissionDate}</p>
                 </div>
@@ -413,7 +501,6 @@ const HospitalManagementAgent = () => {
     </div>
   );
 
-
   return (
     <MainLayout>
       <div className="min-h-screen bg-gray-50 p-6">
@@ -456,10 +543,11 @@ const HospitalManagementAgent = () => {
                 <button
                   key={view}
                   onClick={() => setActiveView(view)}
-                  className={`px-4 py-2 rounded-lg capitalize font-medium transition-colors ${activeView === view
-                    ? 'bg-blue-600 text-white'
-                    : 'text-gray-600 hover:bg-gray-100'
-                    }`}
+                  className={`px-4 py-2 rounded-lg capitalize font-medium transition-colors ${
+                    activeView === view
+                      ? 'bg-blue-600 text-white'
+                      : 'text-gray-600 hover:bg-gray-100'
+                  }`}
                 >
                   {view}
                 </button>
@@ -471,7 +559,7 @@ const HospitalManagementAgent = () => {
           {activeView === 'dashboard' && (
             <>
               {/* Stats Cards */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-6">
                 {getDashboardStats.map((stat, index) => {
                   const IconComponent = stat.icon;
                   return (
@@ -602,34 +690,75 @@ const HospitalManagementAgent = () => {
                 </div>
 
                 <div className="bg-white rounded-lg shadow-md p-6">
-                  <h3 className="text-lg font-semibold mb-4">Bed Occupancy Rate</h3>
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-center">
-                      <span>ICU</span>
-                      <div className="flex items-center space-x-2">
-                        <div className="w-32 bg-gray-200 rounded-full h-2">
-                          <div className="bg-red-500 h-2 rounded-full" style={{ width: '85%' }}></div>
-                        </div>
-                        <span className="text-sm">85%</span>
+                  <h3 className="text-lg font-semibold mb-4">Bed Occupancy by Type</h3>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <BarChart data={getBedOccupancyByType}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="bedType" />
+                      <YAxis />
+                      <Tooltip formatter={(value, name) => [
+                        name === 'occupied' ? `${value} occupied` : `${value}% rate`,
+                        name === 'occupied' ? 'Beds' : 'Occupancy Rate'
+                      ]} />
+                      <Bar dataKey="occupied" fill="#3B82F6" name="occupied" />
+                      <Bar dataKey="occupancyRate" fill="#10B981" name="occupancyRate" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-lg shadow-md p-6">
+                <h3 className="text-lg font-semibold mb-4">Department Bed Distribution</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {getDepartmentBedDistribution.map((dept, index) => (
+                    <div key={index} className="bg-gray-50 p-4 rounded-lg">
+                      <h4 className="font-medium text-gray-800 mb-2">{dept.department}</h4>
+                      <p className="text-2xl font-bold text-blue-600 mb-1">{dept.bedsOccupied}</p>
+                      <p className="text-sm text-gray-600 mb-2">Beds Occupied</p>
+                      <div className="text-xs text-gray-500">
+                        <strong>Beds:</strong> {dept.bedNumbers.join(', ')}
                       </div>
                     </div>
-                    <div className="flex justify-between items-center">
-                      <span>General</span>
-                      <div className="flex items-center space-x-2">
-                        <div className="w-32 bg-gray-200 rounded-full h-2">
-                          <div className="bg-yellow-500 h-2 rounded-full" style={{ width: '72%' }}></div>
-                        </div>
-                        <span className="text-sm">72%</span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-lg shadow-md p-6">
+                <h3 className="text-lg font-semibold mb-4">Critical Metrics</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-red-50 p-4 rounded-lg border-l-4 border-red-500">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-red-800 font-medium">Critical Patients</p>
+                        <p className="text-2xl font-bold text-red-600">
+                          {csvData.filter(p => p.priority === 'critical').length}
+                        </p>
                       </div>
+                      <AlertTriangle className="w-8 h-8 text-red-500" />
                     </div>
-                    <div className="flex justify-between items-center">
-                      <span>Emergency</span>
-                      <div className="flex items-center space-x-2">
-                        <div className="w-32 bg-gray-200 rounded-full h-2">
-                          <div className="bg-green-500 h-2 rounded-full" style={{ width: '45%' }}></div>
-                        </div>
-                        <span className="text-sm">45%</span>
+                  </div>
+                  
+                  <div className="bg-yellow-50 p-4 rounded-lg border-l-4 border-yellow-500">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-yellow-800 font-medium">Average Age</p>
+                        <p className="text-2xl font-bold text-yellow-600">
+                          {Math.round(csvData.reduce((sum, p) => sum + p.age, 0) / csvData.length) || 0}
+                        </p>
                       </div>
+                      <Calendar className="w-8 h-8 text-yellow-500" />
+                    </div>
+                  </div>
+                  
+                  <div className="bg-green-50 p-4 rounded-lg border-l-4 border-green-500">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-green-800 font-medium">Bed Utilization</p>
+                        <p className="text-2xl font-bold text-green-600">
+                          {Math.round((csvData.filter(p => p.status === 'inpatient' && p.bedNumber !== 'N/A').length / 80) * 100)}%
+                        </p>
+                      </div>
+                      <TrendingUp className="w-8 h-8 text-green-500" />
                     </div>
                   </div>
                 </div>
@@ -637,95 +766,161 @@ const HospitalManagementAgent = () => {
             </div>
           )}
 
-          {/* Add Patient Modal */}
+          {/* Add Patient Form */}
           {showAddForm && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-              <div className="bg-white rounded-lg max-w-md w-full mx-4">
+              <div className="bg-white rounded-lg max-w-2xl w-full mx-4">
                 <div className="p-6">
-                  <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-semibold">Add New Patient</h3>
+                  <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-xl font-bold text-gray-800">Add New Patient</h2>
                     <button
                       onClick={() => setShowAddForm(false)}
-                      className="text-gray-500 hover:text-gray-700"
+                      className="text-gray-500 hover:text-gray-700 text-xl font-bold"
                     >
                       ×
                     </button>
                   </div>
-                  <div className="space-y-4">
-                    <input
-                      type="text"
-                      placeholder="Patient Name"
-                      value={customPatient.name}
-                      onChange={(e) => setCustomPatient({ ...customPatient, name: e.target.value })}
-                      className="w-full border rounded px-3 py-2"
-                    />
-                    <div className="grid grid-cols-2 gap-4">
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                      <input
+                        type="text"
+                        value={customPatient.name}
+                        onChange={(e) => setCustomPatient({...customPatient, name: e.target.value})}
+                        className="w-full border rounded-lg px-3 py-2"
+                        placeholder="Patient name"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Age</label>
                       <input
                         type="number"
-                        placeholder="Age"
                         value={customPatient.age}
-                        onChange={(e) => setCustomPatient({ ...customPatient, age: e.target.value })}
-                        className="w-full border rounded px-3 py-2"
+                        onChange={(e) => setCustomPatient({...customPatient, age: e.target.value})}
+                        className="w-full border rounded-lg px-3 py-2"
+                        placeholder="Age"
                       />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Gender</label>
                       <select
                         value={customPatient.gender}
-                        onChange={(e) => setCustomPatient({ ...customPatient, gender: e.target.value })}
-                        className="w-full border rounded px-3 py-2"
+                        onChange={(e) => setCustomPatient({...customPatient, gender: e.target.value})}
+                        className="w-full border rounded-lg px-3 py-2"
                       >
-                        <option value="">Gender</option>
+                        <option value="">Select Gender</option>
                         <option value="Male">Male</option>
                         <option value="Female">Female</option>
                         <option value="Other">Other</option>
                       </select>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Bed Number</label>
+                      <input
+                        type="text"
+                        value={customPatient.bedNumber}
+                        onChange={(e) => setCustomPatient({...customPatient, bedNumber: e.target.value})}
+                        className="w-full border rounded-lg px-3 py-2"
+                        placeholder="e.g., A101 (auto-generated if empty)"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Bed Type</label>
+                      <select
+                        value={customPatient.bedType}
+                        onChange={(e) => setCustomPatient({...customPatient, bedType: e.target.value})}
+                        className="w-full border rounded-lg px-3 py-2"
+                      >
+                        <option value="general">General</option>
+                        <option value="semi-private">Semi-Private</option>
+                        <option value="private">Private</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
                       <select
                         value={customPatient.status}
-                        onChange={(e) => setCustomPatient({ ...customPatient, status: e.target.value })}
-                        className="w-full border rounded px-3 py-2"
+                        onChange={(e) => setCustomPatient({...customPatient, status: e.target.value})}
+                        className="w-full border rounded-lg px-3 py-2"
                       >
                         <option value="inpatient">Inpatient</option>
                         <option value="outpatient">Outpatient</option>
                       </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Priority</label>
                       <select
                         value={customPatient.priority}
-                        onChange={(e) => setCustomPatient({ ...customPatient, priority: e.target.value })}
-                        className="w-full border rounded px-3 py-2"
+                        onChange={(e) => setCustomPatient({...customPatient, priority: e.target.value})}
+                        className="w-full border rounded-lg px-3 py-2"
                       >
                         <option value="normal">Normal</option>
                         <option value="urgent">Urgent</option>
                         <option value="critical">Critical</option>
                       </select>
                     </div>
-                    <input
-                      type="date"
-                      value={customPatient.admissionDate}
-                      onChange={(e) => setCustomPatient({ ...customPatient, admissionDate: e.target.value })}
-                      className="w-full border rounded px-3 py-2"
-                    />
-                    <textarea
-                      placeholder="Symptoms"
-                      value={customPatient.symptoms}
-                      onChange={(e) => setCustomPatient({ ...customPatient, symptoms: e.target.value })}
-                      className="w-full border rounded px-3 py-2 h-20"
-                    />
-                    <textarea
-                      placeholder="Medical History"
-                      value={customPatient.medicalHistory}
-                      onChange={(e) => setCustomPatient({ ...customPatient, medicalHistory: e.target.value })}
-                      className="w-full border rounded px-3 py-2 h-20"
-                    />
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Department</label>
+                      <input
+                        type="text"
+                        value={customPatient.department}
+                        onChange={(e) => setCustomPatient({...customPatient, department: e.target.value})}
+                        className="w-full border rounded-lg px-3 py-2"
+                        placeholder="e.g., Cardiology, Surgery"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Admission Date</label>
+                      <input
+                        type="date"
+                        value={customPatient.admissionDate}
+                        onChange={(e) => setCustomPatient({...customPatient, admissionDate: e.target.value})}
+                        className="w-full border rounded-lg px-3 py-2"
+                      />
+                    </div>
+
+                    <div className="md:col-span-2">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Symptoms</label>
+                      <textarea
+                        value={customPatient.symptoms}
+                        onChange={(e) => setCustomPatient({...customPatient, symptoms: e.target.value})}
+                        className="w-full border rounded-lg px-3 py-2"
+                        rows={3}
+                        placeholder="Describe symptoms..."
+                      />
+                    </div>
+
+                    <div className="md:col-span-2">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Medical History</label>
+                      <textarea
+                        value={customPatient.medicalHistory}
+                        onChange={(e) => setCustomPatient({...customPatient, medicalHistory: e.target.value})}
+                        className="w-full border rounded-lg px-3 py-2"
+                        rows={3}
+                        placeholder="Medical history..."
+                      />
+                    </div>
                   </div>
+
                   <div className="flex justify-end space-x-4 mt-6">
                     <button
                       onClick={() => setShowAddForm(false)}
-                      className="px-4 py-2 text-gray-600 hover:text-gray-800"
+                      className="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={addCustomPatient}
-                      className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                     >
                       Add Patient
                     </button>
@@ -735,7 +930,7 @@ const HospitalManagementAgent = () => {
             </div>
           )}
 
-          {/* Patient Detail Modal */}
+          {/* Patient Modal */}
           {selectedPatient && (
             <PatientModal
               patient={selectedPatient}
