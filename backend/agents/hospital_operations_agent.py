@@ -1,451 +1,397 @@
 import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import io
-import base64
-from typing import Dict, List, Any, Optional
 import json
-from datetime import datetime, timedelta
-import warnings
-warnings.filterwarnings('ignore')
+import logging
+from typing import List, Dict, Any, Optional
+from pathlib import Path
+import PyPDF2
+import openpyxl
+from io import BytesIO
+import re
+from datetime import datetime
+from dataclasses import dataclass
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+@dataclass
+class Patient:
+    name: str
+    age: int
+    gender: str
+    bed_number: str
+    bed_type: str
+    status: str  # inpatient/outpatient
+    priority: str  # normal/urgent/critical
+    admission_date: str
+    symptoms: str
+    medical_history: str
+    diagnosis: str
+    department: str
+    vitals: Optional[Dict[str, Any]] = None
 
 class HospitalOperationsAgent:
-    """AI Agent for Hospital Operations Data Analysis and Visualization"""
+    """Agent for processing hospital operations data from various file formats"""
     
     def __init__(self):
-        self.data = None
-        self.processed_data = {}
-        self.visualization_cache = {}
+        self.supported_formats = ['.csv', '.xlsx', '.xls', '.pdf']
         
-    def load_data(self, file_path: str = None, data_dict: Dict = None) -> Dict[str, Any]:
-        """Load data from CSV file or dictionary input"""
+    def process_file(self, file_path: str, file_content: bytes = None) -> Dict[str, Any]:
+        """Process uploaded file and extract hospital operations data"""
         try:
-            if file_path:
-                self.data = pd.read_csv(file_path)
-            elif data_dict:
-                self.data = pd.DataFrame(data_dict)
+            file_extension = Path(file_path).suffix.lower()
+            
+            if file_extension == '.csv':
+                return self._process_csv(file_path, file_content)
+            elif file_extension in ['.xlsx', '.xls']:
+                return self._process_excel(file_path, file_content)
+            elif file_extension == '.pdf':
+                return self._process_pdf(file_path, file_content)
             else:
-                raise ValueError("Either file_path or data_dict must be provided")
-            
-            # Clean and preprocess data
-            self._preprocess_data()
-            
-            return {
-                "status": "success",
-                "message": f"Data loaded successfully. {len(self.data)} records found.",
-                "columns": list(self.data.columns),
-                "shape": self.data.shape,
-                "sample_data": self.data.head().to_dict('records')
-            }
+                raise ValueError(f"Unsupported file format: {file_extension}")
+                
         except Exception as e:
-            return {"status": "error", "message": f"Error loading data: {str(e)}"}
+            logger.error(f"Error processing file {file_path}: {e}")
+            raise
     
-    def _preprocess_data(self):
-        """Clean and preprocess the hospital data"""
-        if self.data is None:
-            return
-        
-        # Convert date columns
-        date_columns = ['admissionDate', 'dischargeDate', 'appointmentDate']
-        for col in date_columns:
-            if col in self.data.columns:
-                self.data[col] = pd.to_datetime(self.data[col], errors='coerce')
-        
-        # Convert age to numeric
-        if 'age' in self.data.columns:
-            self.data['age'] = pd.to_numeric(self.data['age'], errors='coerce')
-        
-        # Standardize categorical columns
-        categorical_columns = ['gender', 'status', 'priority', 'department']
-        for col in categorical_columns:
-            if col in self.data.columns:
-                self.data[col] = self.data[col].astype(str).str.lower().str.strip()
-        
-        # Create age groups
-        if 'age' in self.data.columns:
-            self.data['age_group'] = pd.cut(
-                self.data['age'], 
-                bins=[0, 18, 35, 50, 65, 100], 
-                labels=['0-18', '19-35', '36-50', '51-65', '65+']
-            )
-        
-        # Extract vitals if available
-        if 'vitals' in self.data.columns:
-            self._extract_vitals()
-    
-    def _extract_vitals(self):
-        """Extract vital signs from vitals column"""
+    def _process_csv(self, file_path: str, file_content: bytes = None) -> Dict[str, Any]:
+        """Process CSV file containing patient data"""
         try:
-            vitals_data = []
-            for idx, vital in self.data['vitals'].items():
-                if pd.isna(vital):
-                    vitals_data.append({'temperature': None, 'heartRate': None, 'bloodPressure': None})
+            if file_content:
+                df = pd.read_csv(BytesIO(file_content))
+            else:
+                df = pd.read_csv(file_path)
+            
+            patients = self._extract_patients_from_dataframe(df)
+            return self._generate_hospital_stats(patients)
+            
+        except Exception as e:
+            logger.error(f"Error processing CSV file: {e}")
+            raise
+    
+    def _process_excel(self, file_path: str, file_content: bytes = None) -> Dict[str, Any]:
+        """Process Excel file containing patient data"""
+        try:
+            if file_content:
+                df = pd.read_excel(BytesIO(file_content))
+            else:
+                df = pd.read_excel(file_path)
+            
+            patients = self._extract_patients_from_dataframe(df)
+            return self._generate_hospital_stats(patients)
+            
+        except Exception as e:
+            logger.error(f"Error processing Excel file: {e}")
+            raise
+    
+    def _process_pdf(self, file_path: str, file_content: bytes = None) -> Dict[str, Any]:
+        """Process PDF file containing patient data"""
+        try:
+            if file_content:
+                pdf_reader = PyPDF2.PdfReader(BytesIO(file_content))
+            else:
+                with open(file_path, 'rb') as file:
+                    pdf_reader = PyPDF2.PdfReader(file)
+            
+            # Extract text from all pages
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text()
+            
+            # Parse patient data from text
+            patients = self._extract_patients_from_text(text)
+            return self._generate_hospital_stats(patients)
+            
+        except Exception as e:
+            logger.error(f"Error processing PDF file: {e}")
+            raise
+    
+    def _extract_patients_from_dataframe(self, df: pd.DataFrame) -> List[Patient]:
+        """Extract patient data from pandas DataFrame"""
+        patients = []
+        
+        # Normalize column names (handle different naming conventions)
+        df.columns = df.columns.str.lower().str.strip()
+        column_mapping = {
+            'patient_name': 'name',
+            'patient name': 'name',
+            'full_name': 'name',
+            'full name': 'name',
+            'bed_number': 'bed_number',
+            'bed number': 'bed_number',
+            'bed': 'bed_number',
+            'room': 'bed_number',
+            'bed_type': 'bed_type',
+            'bed type': 'bed_type',
+            'room_type': 'bed_type',
+            'room type': 'bed_type',
+            'patient_status': 'status',
+            'patient status': 'status',
+            'admission_status': 'status',
+            'admission status': 'status',
+            'priority_level': 'priority',
+            'priority level': 'priority',
+            'urgency': 'priority',
+            'admission_date': 'admission_date',
+            'admission date': 'admission_date',
+            'admit_date': 'admission_date',
+            'admit date': 'admission_date',
+            'medical_history': 'medical_history',
+            'medical history': 'medical_history',
+            'history': 'medical_history',
+            'dept': 'department',
+            'ward': 'department'
+        }
+        
+        # Rename columns based on mapping
+        for old_name, new_name in column_mapping.items():
+            if old_name in df.columns:
+                df = df.rename(columns={old_name: new_name})
+        
+        for _, row in df.iterrows():
+            try:
+                # Handle missing or NaN values more robustly
+                age_val = row.get('age')
+                if pd.isna(age_val) or age_val == '' or age_val is None:
+                    age = 0
                 else:
                     try:
-                        if isinstance(vital, str):
-                            vital_dict = eval(vital) if vital.startswith('{') else {}
-                        else:
-                            vital_dict = vital
-                        vitals_data.append(vital_dict)
-                    except:
-                        vitals_data.append({'temperature': None, 'heartRate': None, 'bloodPressure': None})
-            
-            vitals_df = pd.DataFrame(vitals_data)
-            self.data = pd.concat([self.data, vitals_df], axis=1)
-        except Exception as e:
-            print(f"Error extracting vitals: {e}")
-    
-    def generate_dashboard_stats(self) -> Dict[str, Any]:
-        """Generate key dashboard statistics"""
-        if self.data is None:
-            return {"error": "No data available"}
-        
-        stats = {
-            "total_patients": len(self.data),
-            "inpatients": len(self.data[self.data['status'] == 'inpatient']) if 'status' in self.data.columns else 0,
-            "outpatients": len(self.data[self.data['status'] == 'outpatient']) if 'status' in self.data.columns else 0,
-            "critical_cases": len(self.data[self.data['priority'] == 'critical']) if 'priority' in self.data.columns else 0,
-            "urgent_cases": len(self.data[self.data['priority'] == 'urgent']) if 'priority' in self.data.columns else 0,
-            "normal_cases": len(self.data[self.data['priority'] == 'normal']) if 'priority' in self.data.columns else 0
-        }
-        
-        # Department distribution
-        if 'department' in self.data.columns:
-            stats["department_distribution"] = self.data['department'].value_counts().to_dict()
-        
-        # Age statistics
-        if 'age' in self.data.columns:
-            stats["age_stats"] = {
-                "mean_age": self.data['age'].mean(),
-                "median_age": self.data['age'].median(),
-                "age_distribution": self.data['age_group'].value_counts().to_dict() if 'age_group' in self.data.columns else {}
-            }
-        
-        # Gender distribution
-        if 'gender' in self.data.columns:
-            stats["gender_distribution"] = self.data['gender'].value_counts().to_dict()
-        
-        return stats
-    
-    def create_priority_distribution_chart(self) -> str:
-        """Create priority distribution pie chart"""
-        if 'priority' in self.data.columns:
-            priority_counts = self.data['priority'].value_counts()
-            
-            fig = px.pie(
-                values=priority_counts.values,
-                names=priority_counts.index,
-                title="Patient Priority Distribution",
-                color_discrete_map={
-                    'critical': '#EF4444',
-                    'urgent': '#F59E0B',
-                    'normal': '#10B981'
-                }
-            )
-            
-            fig.update_layout(
-                showlegend=True,
-                height=400,
-                font=dict(size=12)
-            )
-            
-            return fig.to_json()
-        return json.dumps({"error": "Priority column not found"})
-    
-    def create_department_stats_chart(self) -> str:
-        """Create department statistics bar chart"""
-        if 'department' in self.data.columns:
-            dept_counts = self.data['department'].value_counts()
-            
-            fig = px.bar(
-                x=dept_counts.index,
-                y=dept_counts.values,
-                title="Patients by Department",
-                labels={'x': 'Department', 'y': 'Number of Patients'},
-                color=dept_counts.values,
-                color_continuous_scale='Blues'
-            )
-            
-            fig.update_layout(
-                showlegend=False,
-                height=400,
-                xaxis_tickangle=-45
-            )
-            
-            return fig.to_json()
-        return json.dumps({"error": "Department column not found"})
-    
-    def create_age_distribution_chart(self) -> str:
-        """Create age distribution chart"""
-        if 'age_group' in self.data.columns:
-            age_counts = self.data['age_group'].value_counts().sort_index()
-            
-            fig = px.bar(
-                x=age_counts.index,
-                y=age_counts.values,
-                title="Age Distribution",
-                labels={'x': 'Age Group', 'y': 'Number of Patients'},
-                color=age_counts.values,
-                color_continuous_scale='Greens'
-            )
-            
-            fig.update_layout(
-                showlegend=False,
-                height=400
-            )
-            
-            return fig.to_json()
-        return json.dumps({"error": "Age group data not available"})
-    
-    def create_admissions_trend_chart(self) -> str:
-        """Create monthly admissions trend chart"""
-        if 'admissionDate' in self.data.columns:
-            # Create sample trend data if actual dates are not available
-            monthly_data = self.data.groupby(
-                self.data['admissionDate'].dt.to_period('M')
-            ).size() if not self.data['admissionDate'].isna().all() else None
-            
-            if monthly_data is not None and len(monthly_data) > 0:
-                fig = px.line(
-                    x=monthly_data.index.astype(str),
-                    y=monthly_data.values,
-                    title="Monthly Admissions Trend",
-                    labels={'x': 'Month', 'y': 'Number of Admissions'}
-                )
-            else:
-                # Generate sample data for demonstration
-                months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun']
-                admissions = [120, 135, 148, 162, 178, 155]
+                        age = int(float(age_val))  # Handle string numbers
+                    except (ValueError, TypeError):
+                        age = 0
                 
-                fig = px.line(
-                    x=months,
-                    y=admissions,
-                    title="Monthly Admissions Trend (Sample Data)",
-                    labels={'x': 'Month', 'y': 'Number of Admissions'}
+                # Extract patient data with fallbacks and proper NaN handling
+                patient = Patient(
+                    name=str(row.get('name', f'Patient_{len(patients)+1}')) if pd.notna(row.get('name')) else f'Patient_{len(patients)+1}',
+                    age=age,
+                    gender=str(row.get('gender', 'Unknown')) if pd.notna(row.get('gender')) else 'Unknown',
+                    bed_number=str(row.get('bed_number', 'N/A')) if pd.notna(row.get('bed_number')) else 'N/A',
+                    bed_type=str(row.get('bed_type', 'general')).lower() if pd.notna(row.get('bed_type')) else 'general',
+                    status=str(row.get('status', 'inpatient')).lower() if pd.notna(row.get('status')) else 'inpatient',
+                    priority=str(row.get('priority', 'normal')).lower() if pd.notna(row.get('priority')) else 'normal',
+                    admission_date=str(row.get('admission_date', datetime.now().strftime('%Y-%m-%d'))) if pd.notna(row.get('admission_date')) else datetime.now().strftime('%Y-%m-%d'),
+                    symptoms=str(row.get('symptoms', '')) if pd.notna(row.get('symptoms')) else '',
+                    medical_history=str(row.get('medical_history', '')) if pd.notna(row.get('medical_history')) else '',
+                    diagnosis=str(row.get('diagnosis', 'Pending')) if pd.notna(row.get('diagnosis')) else 'Pending',
+                    department=str(row.get('department', 'General')) if pd.notna(row.get('department')) else 'General',
+                    vitals=self._parse_vitals(row.get('vitals', '{}'))
                 )
-            
-            fig.update_traces(line=dict(color='#3B82F6', width=3))
-            fig.update_layout(height=400)
-            
-            return fig.to_json()
-        return json.dumps({"error": "Admission date column not found"})
-    
-    def create_vitals_analysis_chart(self) -> str:
-        """Create vital signs analysis chart"""
-        vitals_columns = ['temperature', 'heartRate']
-        available_vitals = [col for col in vitals_columns if col in self.data.columns]
+                
+                # Validate and normalize data
+                patient = self._validate_patient_data(patient)
+                patients.append(patient)
+                
+            except Exception as e:
+                logger.warning(f"Error processing patient row {len(patients)+1}: {e}")
+                # Still add a basic patient record to avoid losing data
+                try:
+                    basic_patient = Patient(
+                        name=f'Patient_{len(patients)+1}',
+                        age=0,
+                        gender='Unknown',
+                        bed_number='N/A',
+                        bed_type='general',
+                        status='inpatient',
+                        priority='normal',
+                        admission_date=datetime.now().strftime('%Y-%m-%d'),
+                        symptoms='',
+                        medical_history='',
+                        diagnosis='Pending',
+                        department='General'
+                    )
+                    patients.append(basic_patient)
+                except:
+                    continue
         
-        if available_vitals:
-            fig = make_subplots(
-                rows=1, cols=len(available_vitals),
-                subplot_titles=available_vitals
-            )
-            
-            for i, vital in enumerate(available_vitals):
-                fig.add_trace(
-                    go.Histogram(
-                        x=self.data[vital].dropna(),
-                        name=vital,
-                        nbinsx=20
-                    ),
-                    row=1, col=i+1
-                )
-            
-            fig.update_layout(
-                title="Vital Signs Distribution",
-                height=400,
-                showlegend=False
-            )
-            
-            return fig.to_json()
-        return json.dumps({"error": "Vital signs data not available"})
+        return patients
     
-    def create_bed_occupancy_chart(self) -> str:
-        """Create bed occupancy visualization"""
-        # Sample bed occupancy data
-        bed_data = {
-            'Department': ['ICU', 'General', 'Emergency', 'Surgery'],
-            'Occupancy': [85, 72, 45, 68],
-            'Capacity': [100, 100, 100, 100]
+    def _extract_patients_from_text(self, text: str) -> List[Patient]:
+        """Extract patient data from PDF text using pattern matching"""
+        patients = []
+        
+        # Common patterns for patient data in medical documents
+        patterns = {
+            'name': r'(?:Patient|Name):\s*([A-Za-z\s]+)',
+            'age': r'(?:Age):\s*(\d+)',
+            'gender': r'(?:Gender|Sex):\s*(Male|Female|M|F)',
+            'bed': r'(?:Bed|Room):\s*([A-Za-z0-9]+)',
+            'department': r'(?:Department|Ward):\s*([A-Za-z\s]+)',
+            'status': r'(?:Status):\s*(inpatient|outpatient)',
+            'priority': r'(?:Priority|Urgency):\s*(normal|urgent|critical)'
         }
         
-        df_beds = pd.DataFrame(bed_data)
+        # Split text into potential patient records
+        sections = re.split(r'\n\s*\n', text)
         
-        fig = go.Figure()
-        
-        fig.add_trace(go.Bar(
-            name='Occupied',
-            x=df_beds['Department'],
-            y=df_beds['Occupancy'],
-            marker_color='#EF4444'
-        ))
-        
-        fig.add_trace(go.Bar(
-            name='Available',
-            x=df_beds['Department'],
-            y=df_beds['Capacity'] - df_beds['Occupancy'],
-            marker_color='#10B981'
-        ))
-        
-        fig.update_layout(
-            title='Bed Occupancy by Department',
-            barmode='stack',
-            height=400,
-            yaxis_title='Number of Beds'
-        )
-        
-        return fig.to_json()
-    
-    def generate_ai_insights(self) -> Dict[str, Any]:
-        """Generate AI-powered insights from the data"""
-        insights = {
-            "critical_alerts": [],
-            "recommendations": [],
-            "patterns": [],
-            "predictions": []
-        }
-        
-        if self.data is None:
-            return insights
-        
-        # Critical alerts
-        if 'priority' in self.data.columns:
-            critical_count = len(self.data[self.data['priority'] == 'critical'])
-            if critical_count > 0:
-                insights["critical_alerts"].append(
-                    f"🚨 {critical_count} critical patients require immediate attention"
+        for i, section in enumerate(sections):
+            if len(section.strip()) < 50:  # Skip short sections
+                continue
+                
+            patient_data = {}
+            for field, pattern in patterns.items():
+                match = re.search(pattern, section, re.IGNORECASE)
+                if match:
+                    patient_data[field] = match.group(1).strip()
+            
+            # Only create patient if we have at least name or bed number
+            if patient_data.get('name') or patient_data.get('bed'):
+                patient = Patient(
+                    name=patient_data.get('name', f'Patient_{i+1}'),
+                    age=int(patient_data.get('age', 0)) if patient_data.get('age') else 0,
+                    gender=patient_data.get('gender', 'Unknown'),
+                    bed_number=patient_data.get('bed', 'N/A'),
+                    bed_type='general',
+                    status=patient_data.get('status', 'inpatient'),
+                    priority=patient_data.get('priority', 'normal'),
+                    admission_date=datetime.now().strftime('%Y-%m-%d'),
+                    symptoms='',
+                    medical_history='',
+                    diagnosis='Pending',
+                    department=patient_data.get('department', 'General')
                 )
+                
+                patient = self._validate_patient_data(patient)
+                patients.append(patient)
         
-        if 'temperature' in self.data.columns:
-            high_fever = len(self.data[self.data['temperature'] > 39])
-            if high_fever > 0:
-                insights["critical_alerts"].append(
-                    f"🌡️ {high_fever} patients with high fever (>39°C)"
-                )
-        
-        # Recommendations
-        if 'department' in self.data.columns:
-            dept_load = self.data['department'].value_counts()
-            max_dept = dept_load.idxmax()
-            insights["recommendations"].append(
-                f"📋 Consider additional staffing for {max_dept} department ({dept_load.max()} patients)"
-            )
-        
-        if 'age' in self.data.columns:
-            elderly_patients = len(self.data[self.data['age'] > 65])
-            if elderly_patients > 0:
-                insights["recommendations"].append(
-                    f"👴 Special attention needed for {elderly_patients} elderly patients (>65 years)"
-                )
-        
-        # Patterns
-        if 'gender' in self.data.columns:
-            gender_dist = self.data['gender'].value_counts()
-            insights["patterns"].append(
-                f"👥 Gender distribution: {dict(gender_dist)}"
-            )
-        
-        if 'status' in self.data.columns:
-            status_dist = self.data['status'].value_counts()
-            insights["patterns"].append(
-                f"🏥 Patient status: {dict(status_dist)}"
-            )
-        
-        # Predictions (basic trend analysis)
-        insights["predictions"].append(
-            "📈 Based on current trends, consider increasing ICU capacity by 15%"
-        )
-        
-        insights["predictions"].append(
-            "⏰ Peak admission hours appear to be between 2-6 PM"
-        )
-        
-        return insights
+        return patients
     
-    def generate_comprehensive_report(self) -> Dict[str, Any]:
-        """Generate a comprehensive hospital operations report"""
-        if self.data is None:
-            return {"error": "No data available for report generation"}
+    def _parse_vitals(self, vitals_str: str) -> Dict[str, Any]:
+        """Parse vitals from string format"""
+        try:
+            if pd.isna(vitals_str) or vitals_str is None:
+                return {}
+            if isinstance(vitals_str, str) and vitals_str.strip():
+                # Handle common JSON-like formats
+                vitals_str = vitals_str.strip()
+                if vitals_str.startswith('{') and vitals_str.endswith('}'):
+                    return json.loads(vitals_str)
+                else:
+                    # Try to parse key-value pairs separated by commas
+                    vitals = {}
+                    pairs = vitals_str.split(',')
+                    for pair in pairs:
+                        if ':' in pair:
+                            key, value = pair.split(':', 1)
+                            vitals[key.strip()] = value.strip()
+                    return vitals
+            return {}
+        except Exception as e:
+            logger.warning(f"Error parsing vitals '{vitals_str}': {e}")
+            return {}
+    
+    def _validate_patient_data(self, patient: Patient) -> Patient:
+        """Validate and normalize patient data"""
+        # Normalize status
+        if patient.status.lower() in ['in', 'inpatient', 'admitted']:
+            patient.status = 'inpatient'
+        elif patient.status.lower() in ['out', 'outpatient', 'discharged']:
+            patient.status = 'outpatient'
+        else:
+            patient.status = 'inpatient'
         
-        report = {
-            "timestamp": datetime.now().isoformat(),
-            "summary": self.generate_dashboard_stats(),
-            "visualizations": {
-                "priority_distribution": self.create_priority_distribution_chart(),
-                "department_stats": self.create_department_stats_chart(),
-                "age_distribution": self.create_age_distribution_chart(),
-                "admissions_trend": self.create_admissions_trend_chart(),
-                "bed_occupancy": self.create_bed_occupancy_chart()
-            },
-            "ai_insights": self.generate_ai_insights(),
-            "data_quality": {
-                "total_records": len(self.data),
-                "missing_values": self.data.isnull().sum().to_dict(),
-                "data_types": self.data.dtypes.astype(str).to_dict()
-            }
+        # Normalize priority
+        if patient.priority.lower() in ['high', 'critical', 'emergency']:
+            patient.priority = 'critical'
+        elif patient.priority.lower() in ['medium', 'urgent', 'moderate']:
+            patient.priority = 'urgent'
+        else:
+            patient.priority = 'normal'
+        
+        # Normalize bed type
+        if patient.bed_type.lower() in ['private', 'single']:
+            patient.bed_type = 'private'
+        elif patient.bed_type.lower() in ['semi-private', 'semi', 'double']:
+            patient.bed_type = 'semi-private'
+        else:
+            patient.bed_type = 'general'
+        
+        # Ensure age is non-negative
+        if patient.age < 0:
+            patient.age = 0
+            
+        # Clean up string fields
+        patient.name = patient.name.strip() if patient.name else f'Unknown_Patient'
+        patient.department = patient.department.strip() if patient.department else 'General'
+        
+        return patient
+    
+    def _generate_hospital_stats(self, patients: List[Patient]) -> Dict[str, Any]:
+        """Generate hospital statistics for visualization"""
+        
+        # Dashboard stats
+        total_patients = len(patients)
+        inpatients = sum(1 for p in patients if p.status == 'inpatient')
+        outpatients = sum(1 for p in patients if p.status == 'outpatient')
+        critical_patients = sum(1 for p in patients if p.priority == 'critical')
+        unattended_patients = sum(1 for p in patients if p.diagnosis == 'Pending')
+        
+        # Estimate bed statistics (assuming 200 total beds)
+        total_beds = 200
+        occupied_beds = inpatients
+        available_beds = max(0, total_beds - occupied_beds)  # Ensure non-negative
+        
+        dashboard_stats = {
+            "total_patients": total_patients,
+            "inpatients": inpatients,
+            "outpatients": outpatients,
+            "critical_patients": critical_patients,
+            "unattended_patients": unattended_patients,
+            "total_beds": total_beds,
+            "occupied_beds": occupied_beds,
+            "available_beds": available_beds
         }
         
-        return report
-    
-    def export_visualization(self, chart_type: str, format: str = 'html') -> str:
-        """Export specific visualization in requested format"""
-        chart_methods = {
-            'priority': self.create_priority_distribution_chart,
-            'department': self.create_department_stats_chart,
-            'age': self.create_age_distribution_chart,
-            'admissions': self.create_admissions_trend_chart,
-            'vitals': self.create_vitals_analysis_chart,
-            'occupancy': self.create_bed_occupancy_chart
-        }
+        # Priority distribution for pie chart
+        priority_counts = {'normal': 0, 'urgent': 0, 'critical': 0}
+        for patient in patients:
+            if patient.priority in priority_counts:
+                priority_counts[patient.priority] += 1
+            else:
+                priority_counts['normal'] += 1  # Default unknown priorities to normal
         
-        if chart_type not in chart_methods:
-            return json.dumps({"error": f"Chart type '{chart_type}' not supported"})
+        priority_distribution = [
+            {"name": "Normal", "value": priority_counts['normal']},
+            {"name": "Urgent", "value": priority_counts['urgent']},
+            {"name": "Critical", "value": priority_counts['critical']}
+        ]
         
-        return chart_methods[chart_type]()
-
-# Example usage and API endpoints
-if __name__ == "__main__":
-    # Initialize the agent
-    agent = HospitalOperationsAgent()
-    
-    # Sample data for testing
-    sample_data = [
-        {
-            'name': 'John Smith',
-            'age': 45,
-            'gender': 'male',
-            'status': 'inpatient',
-            'priority': 'critical',
-            'department': 'cardiology',
-            'admissionDate': '2024-12-01',
-            'temperature': 38.2,
-            'heartRate': 95
-        },
-        {
-            'name': 'Sarah Johnson',
-            'age': 32,
-            'gender': 'female',
-            'status': 'inpatient',
-            'priority': 'normal',
-            'department': 'internal medicine',
-            'admissionDate': '2024-12-02',
-            'temperature': 39.1,
-            'heartRate': 88
+        # Department statistics for pie chart
+        dept_counts = {}
+        for patient in patients:
+            dept = patient.department.strip() if patient.department else 'General'
+            if not dept:  # Handle empty departments
+                dept = 'General'
+            dept_counts[dept] = dept_counts.get(dept, 0) + 1
+        
+        department_stats = [
+            {"name": dept, "value": count}
+            for dept, count in dept_counts.items()
+        ]
+        
+        # Age distribution for bar chart
+        age_groups = {'0-18': 0, '19-35': 0, '36-50': 0, '51-65': 0, '65+': 0}
+        for patient in patients:
+            age = max(0, patient.age)  # Ensure non-negative age
+            if age <= 18:
+                age_groups['0-18'] += 1
+            elif age <= 35:
+                age_groups['19-35'] += 1
+            elif age <= 50:
+                age_groups['36-50'] += 1
+            elif age <= 65:
+                age_groups['51-65'] += 1
+            else:
+                age_groups['65+'] += 1
+        
+        age_distribution = [
+            {"age_range": age_range, "count": count}
+            for age_range, count in age_groups.items()
+        ]
+        
+        return {
+            "dashboard_stats": dashboard_stats,
+            "priority_distribution": priority_distribution,
+            "department_stats": department_stats,
+            "age_distribution": age_distribution,
+            "total_patients_processed": total_patients
         }
-    ]
-    
-    # Load sample data
-    result = agent.load_data(data_dict=sample_data)
-    print("Data Loading Result:", result)
-    
-    # Generate comprehensive report
-    report = agent.generate_comprehensive_report()
-    print("\nGenerated Report Keys:", list(report.keys()))
-    
-    # Generate specific visualization
-    priority_chart = agent.create_priority_distribution_chart()
-    print("\nPriority Chart Generated:", len(priority_chart) > 0)
