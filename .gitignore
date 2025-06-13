@@ -34,3 +34,5 @@ backend/venv
 frontend/node_modules
 __pycache__
 backend/agents/__pycache__
+.env
+__pycache__
