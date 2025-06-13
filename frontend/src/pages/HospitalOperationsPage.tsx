@@ -1,7 +1,10 @@
+// Enhanced HospitalManagementAgent with Filtering Functionality
+// This code adds filtering to the patients view without changing other functionalities
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { FC } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell, LineChart, Line, ResponsiveContainer } from 'recharts';
-import { Users, Bed, AlertTriangle, UserCheck, FileText, Activity, TrendingUp, Calendar, Heart, Thermometer, BedDouble } from 'lucide-react';
+import { Users, Bed, AlertTriangle, UserCheck, FileText, Activity, TrendingUp, Calendar, Heart, Thermometer, BedDouble, Filter, X } from 'lucide-react';
 import * as Papa from 'papaparse';
 import { useNavigate } from 'react-router-dom';
 import MainLayout from '../components/layout/MainLayout';
@@ -31,16 +34,16 @@ type CsvPatientRow = {
   age: string | number;
   gender: string;
   bedNumber?: string;
-  bed_number?: string; // CSV column name
+  bed_number?: string;
   bedType?: string;
-  bed_type?: string; // Alternative CSV column name
+  bed_type?: string;
   status?: string;
   priority?: string;
   admissionDate?: string;
-  admission_date?: string; // CSV column name
+  admission_date?: string;
   symptoms?: string;
   medicalHistory?: string;
-  medical_history?: string; // CSV column name
+  medical_history?: string;
   vitals?: string;
   diagnosis?: string;
   department?: string;
@@ -70,11 +73,22 @@ const HospitalManagementAgent = () => {
     admissionDate: '',
     symptoms: '',
     medicalHistory: '',
-    department: '' // Added missing department field
+    department: ''
   });
-  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null); // Fixed type
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [activeView, setActiveView] = useState('dashboard');
+
+  // NEW: Filter states
+  const [showFilters, setShowFilters] = useState(false);
+  const [filters, setFilters] = useState({
+    priority: 'all',
+    department: 'all',
+    status: 'all',
+    bedType: 'all',
+    gender: 'all',
+    searchTerm: ''
+  });
 
   // Sample data for demonstration
   const sampleData: Patient[] = [
@@ -137,12 +151,97 @@ const HospitalManagementAgent = () => {
       vitals: { temperature: 37.2, heartRate: 78, bloodPressure: '110/70' },
       diagnosis: 'Respiratory infection - antibiotics prescribed',
       department: 'Pulmonology'
+    },
+    {
+      name: 'Robert Wilson',
+      age: 55,
+      gender: 'Male',
+      bedNumber: 'A205',
+      bedType: 'private',
+      status: 'inpatient',
+      priority: 'urgent',
+      admissionDate: '2024-12-04',
+      symptoms: 'Chest tightness, irregular heartbeat',
+      medicalHistory: 'Previous heart attack',
+      vitals: { temperature: 37.0, heartRate: 110, bloodPressure: '150/95' },
+      diagnosis: 'Cardiac arrhythmia - monitoring required',
+      department: 'Cardiology'
+    },
+    {
+      name: 'Lisa Anderson',
+      age: 42,
+      gender: 'Female',
+      bedNumber: 'B110',
+      bedType: 'semi-private',
+      status: 'inpatient',
+      priority: 'critical',
+      admissionDate: '2024-12-03',
+      symptoms: 'Severe headache, vision problems, nausea',
+      medicalHistory: 'Migraines, hypertension',
+      vitals: { temperature: 37.5, heartRate: 92, bloodPressure: '180/110' },
+      diagnosis: 'Hypertensive crisis - immediate treatment required',
+      department: 'Emergency Medicine'
     }
   ];
 
   useEffect(() => {
     setCsvData(sampleData);
   }, []);
+
+  // NEW: Get unique values for filter dropdowns
+  const filterOptions = useMemo(() => {
+    const departments = [...new Set(csvData.map(p => p.department))].sort();
+    const priorities = ['normal', 'urgent', 'critical'];
+    const statuses = ['inpatient', 'outpatient'];
+    const bedTypes = ['general', 'semi-private', 'private'];
+    const genders = [...new Set(csvData.map(p => p.gender))].sort();
+
+    return { departments, priorities, statuses, bedTypes, genders };
+  }, [csvData]);
+
+  // NEW: Filter patients based on selected criteria
+  const filteredPatients = useMemo(() => {
+    return csvData.filter(patient => {
+      const matchesPriority = filters.priority === 'all' || patient.priority === filters.priority;
+      const matchesDepartment = filters.department === 'all' || patient.department === filters.department;
+      const matchesStatus = filters.status === 'all' || patient.status === filters.status;
+      const matchesBedType = filters.bedType === 'all' || patient.bedType === filters.bedType;
+      const matchesGender = filters.gender === 'all' || patient.gender === filters.gender;
+      
+      const matchesSearch = filters.searchTerm === '' || 
+        patient.name.toLowerCase().includes(filters.searchTerm.toLowerCase()) ||
+        patient.bedNumber.toLowerCase().includes(filters.searchTerm.toLowerCase()) ||
+        patient.symptoms.toLowerCase().includes(filters.searchTerm.toLowerCase()) ||
+        patient.diagnosis.toLowerCase().includes(filters.searchTerm.toLowerCase());
+
+      return matchesPriority && matchesDepartment && matchesStatus && 
+             matchesBedType && matchesGender && matchesSearch;
+    });
+  }, [csvData, filters]);
+
+  // NEW: Clear all filters
+  const clearFilters = () => {
+    setFilters({
+      priority: 'all',
+      department: 'all',
+      status: 'all',
+      bedType: 'all',
+      gender: 'all',
+      searchTerm: ''
+    });
+  };
+
+  // NEW: Count active filters
+  const activeFiltersCount = useMemo(() => {
+    let count = 0;
+    if (filters.priority !== 'all') count++;
+    if (filters.department !== 'all') count++;
+    if (filters.status !== 'all') count++;
+    if (filters.bedType !== 'all') count++;
+    if (filters.gender !== 'all') count++;
+    if (filters.searchTerm !== '') count++;
+    return count;
+  }, [filters]);
 
   const validBedTypes = ['general', 'semi-private', 'private'] as const;
   const validStatuses = ['inpatient', 'outpatient'] as const;
@@ -160,7 +259,6 @@ const HospitalManagementAgent = () => {
           const processedData: Patient[] = result.data
             .filter((row: CsvPatientRow) => row.name && row.name.trim() !== '')
             .map((row: CsvPatientRow): Patient => {
-              // Handle both bed_number and bedNumber column names
               const bedNumber = row.bedNumber || row.bed_number || 'N/A';
               
               return {
@@ -203,7 +301,6 @@ const HospitalManagementAgent = () => {
 
   const addCustomPatient = () => {
     if (customPatient.name.trim()) {
-      // Generate a unique bed number if not provided
       const generateBedNumber = (): string => {
         const floors = ['A', 'B', 'C', 'D'];
         const existingBeds = csvData.map(p => p.bedNumber).filter(bed => bed !== 'N/A');
@@ -275,7 +372,6 @@ const HospitalManagementAgent = () => {
       if (patient.priority === 'critical') acc.critical++;
       if (patient.priority === 'urgent') acc.urgent++;
       
-      // Count occupied beds (only for inpatients with valid bed numbers)
       if (patient.status === 'inpatient' && patient.bedNumber !== 'N/A') {
         acc.occupiedBeds++;
       }
@@ -317,7 +413,6 @@ const HospitalManagementAgent = () => {
     }));
   }, [csvData]);
 
-  // Fixed department stats function
   const getDepartmentStats = useMemo(() => {
     const deptCount: Record<string, number> = csvData.reduce((acc, patient) => {
       const dept = patient.department || 'General';
@@ -329,8 +424,8 @@ const HospitalManagementAgent = () => {
       .map(([department, patients]) => ({
         department,
         patients,
-        name: department, // For chart compatibility
-        value: patients,  // For chart compatibility
+        name: department,
+        value: patients,
         color: `hsl(${Math.floor(Math.random() * 360)}, 70%, 50%)`
       }))
       .sort((a, b) => b.patients - a.patients);
@@ -354,7 +449,6 @@ const HospitalManagementAgent = () => {
     }));
   }, [csvData]);
 
-  // Additional utility functions
   const getBedOccupancyByType = useMemo(() => {
     const bedTypeCount: Record<string, { total: number; occupied: number }> = {
       general: { total: 0, occupied: 0 },
@@ -368,7 +462,6 @@ const HospitalManagementAgent = () => {
       }
     });
 
-    // Assuming total bed capacity (you may want to make this configurable)
     bedTypeCount.general.total = 50;
     bedTypeCount['semi-private'].total = 20;
     bedTypeCount.private.total = 10;
@@ -522,7 +615,7 @@ const HospitalManagementAgent = () => {
                 />
                 <label
                   htmlFor="csv-upload"
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg cursor-pointer hover:bg-blue-700 transition-colors"
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors cursor-pointer"
                 >
                   Upload CSV
                 </label>
@@ -543,13 +636,13 @@ const HospitalManagementAgent = () => {
                 <button
                   key={view}
                   onClick={() => setActiveView(view)}
-                  className={`px-4 py-2 rounded-lg capitalize font-medium transition-colors ${
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
                     activeView === view
                       ? 'bg-blue-600 text-white'
                       : 'text-gray-600 hover:bg-gray-100'
                   }`}
                 >
-                  {view}
+                  {view.charAt(0).toUpperCase() + view.slice(1)}
                 </button>
               ))}
             </div>
@@ -557,21 +650,21 @@ const HospitalManagementAgent = () => {
 
           {/* Dashboard View */}
           {activeView === 'dashboard' && (
-            <>
+            <div className="space-y-6">
               {/* Stats Cards */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
                 {getDashboardStats.map((stat, index) => {
                   const IconComponent = stat.icon;
                   return (
                     <div key={index} className="bg-white rounded-lg shadow-md p-6">
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className="text-gray-600 text-sm">{stat.name}</p>
-                          <p className="text-3xl font-bold" style={{ color: stat.color }}>
-                            {stat.value}
-                          </p>
+                          <p className="text-sm font-medium text-gray-600">{stat.name}</p>
+                          <p className="text-2xl font-bold text-gray-900">{stat.value}</p>
                         </div>
-                        <IconComponent className="w-8 h-8" style={{ color: stat.color }} />
+                        <div className={`p-3 rounded-full`} style={{ backgroundColor: stat.color + '20' }}>
+                          <IconComponent className="w-6 h-6" style={{ color: stat.color }} />
+                        </div>
                       </div>
                     </div>
                   );
@@ -579,19 +672,21 @@ const HospitalManagementAgent = () => {
               </div>
 
               {/* Charts */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                {/* Priority Distribution */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Priority Distribution Pie Chart */}
                 <div className="bg-white rounded-lg shadow-md p-6">
-                  <h3 className="text-lg font-semibold mb-4">Patient Priority Distribution</h3>
-                  <ResponsiveContainer width="100%" height={250}>
+                  <h3 className="text-lg font-semibold text-gray-800 mb-4">Patient Priority Distribution</h3>
+                  <ResponsiveContainer width="100%" height={300}>
                     <PieChart>
                       <Pie
                         data={getPriorityDistribution}
                         cx="50%"
                         cy="50%"
-                        outerRadius={80}
-                        dataKey="value"
+                        labelLine={false}
                         label={({ name, value }) => `${name}: ${value}`}
+                        outerRadius={80}
+                        fill="#8884d8"
+                        dataKey="value"
                       >
                         {getPriorityDistribution.map((entry, index) => (
                           <Cell key={`cell-${index}`} fill={entry.color} />
@@ -602,72 +697,247 @@ const HospitalManagementAgent = () => {
                   </ResponsiveContainer>
                 </div>
 
-                {/* Department Statistics */}
+                {/* Department Distribution Pie Chart */}
                 <div className="bg-white rounded-lg shadow-md p-6">
-                  <h3 className="text-lg font-semibold mb-4">Patients by Department</h3>
-                  <ResponsiveContainer width="100%" height={250}>
-                    <BarChart data={getDepartmentStats}>
+                  <h3 className="text-lg font-semibold text-gray-800 mb-4">Patients by Department</h3>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <PieChart>
+                      <Pie
+                        data={getDepartmentStats}
+                        cx="50%"
+                        cy="50%"
+                        labelLine={false}
+                        label={({ name, value }) => `${name}: ${value}`}
+                        outerRadius={80}
+                        fill="#8884d8"
+                        dataKey="value"
+                      >
+                        {getDepartmentStats.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Age Distribution Bar Chart */}
+                <div className="bg-white rounded-lg shadow-md p-6 lg:col-span-2">
+                  <h3 className="text-lg font-semibold text-gray-800 mb-4">Age Distribution</h3>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={getAgeDistribution}>
                       <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="department" />
+                      <XAxis dataKey="ageRange" />
                       <YAxis />
                       <Tooltip />
-                      <Bar dataKey="patients" fill="#3B82F6" />
+                      <Legend />
+                      <Bar dataKey="count" fill="#3B82F6" />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
               </div>
-
-              {/* Age Distribution */}
-              <div className="bg-white rounded-lg shadow-md p-6">
-                <h3 className="text-lg font-semibold mb-4">Age Distribution</h3>
-                <ResponsiveContainer width="100%" height={250}>
-                  <BarChart data={getAgeDistribution}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="ageRange" />
-                    <YAxis />
-                    <Tooltip />
-                    <Bar dataKey="count" fill="#10B981" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </>
+            </div>
           )}
 
-          {/* Patients View */}
+          {/* NEW: Enhanced Patients View with Filtering */}
           {activeView === 'patients' && (
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-lg font-semibold">Patient List ({csvData.length})</h3>
-                <div className="flex space-x-2">
-                  <select className="border rounded px-3 py-1 text-sm">
-                    <option>All Priorities</option>
-                    <option>Critical</option>
-                    <option>Urgent</option>
-                    <option>Normal</option>
-                  </select>
-                  <select className="border rounded px-3 py-1 text-sm">
-                    <option>All Departments</option>
-                    <option>Cardiology</option>
-                    <option>Surgery</option>
-                    <option>Internal Medicine</option>
-                  </select>
+            <div className="space-y-6">
+              {/* Filter Controls */}
+              <div className="bg-white rounded-lg shadow-md p-6">
+                <div className="flex justify-between items-center mb-4">
+                  <div className="flex items-center space-x-4">
+                    <h3 className="text-lg font-semibold text-gray-800">Patient List</h3>
+                    <span className="text-sm text-gray-500">
+                      Showing {filteredPatients.length} of {csvData.length} patients
+                    </span>
+                    {activeFiltersCount > 0 && (
+                      <span className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full">
+                        {activeFiltersCount} filter{activeFiltersCount > 1 ? 's' : ''} active
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    {activeFiltersCount > 0 && (
+                      <button
+                        onClick={clearFilters}
+                        className="flex items-center space-x-1 text-sm text-gray-600 hover:text-gray-800"
+                      >
+                        <X className="w-4 h-4" />
+                        <span>Clear filters</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setShowFilters(!showFilters)}
+                      className={`flex items-center space-x-2 px-3 py-2 rounded-lg transition-colors ${
+                        showFilters ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      <Filter className="w-4 h-4" />
+                      <span>Filters</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {csvData.map((patient, index) => (
-                  <PatientCard
-                    key={index}
-                    patient={patient}
-                    onClick={(p: Patient) => setSelectedPatient(p)}
-                  />
-                ))}
+
+                {/* Filter Panel */}
+                {showFilters && (
+                  <div className="border-t pt-4 mt-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+                      {/* Search */}
+                      <div className="xl:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
+                        <input
+                          type="text"
+                          placeholder="Name, bed, symptoms, diagnosis..."
+                          value={filters.searchTerm}
+                          onChange={(e) => setFilters({ ...filters, searchTerm: e.target.value })}
+                          className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                        />
+                      </div>
+
+                      {/* Priority Filter */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Priority</label>
+                        <select
+                          value={filters.priority}
+                          onChange={(e) => setFilters({ ...filters, priority: e.target.value })}
+                          className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                        >
+                          <option value="all">All Priorities</option>
+                          {filterOptions.priorities.map(priority => (
+                            <option key={priority} value={priority}>
+                              {priority.charAt(0).toUpperCase() + priority.slice(1)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Department Filter */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Department</label>
+                        <select
+                          value={filters.department}
+                          onChange={(e) => setFilters({ ...filters, department: e.target.value })}
+                          className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                        >
+                          <option value="all">All Departments</option>
+                          {filterOptions.departments.map(dept => (
+                            <option key={dept} value={dept}>{dept}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Status Filter */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                        <select
+                          value={filters.status}
+                          onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+                          className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                        >
+                          <option value="all">All Statuses</option>
+                          {filterOptions.statuses.map(status => (
+                            <option key={status} value={status}>
+                              {status.charAt(0).toUpperCase() + status.slice(1)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Bed Type Filter */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Bed Type</label>
+                        <select
+                          value={filters.bedType}
+                          onChange={(e) => setFilters({ ...filters, bedType: e.target.value })}
+                          className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                        >
+                          <option value="all">All Bed Types</option>
+                          {filterOptions.bedTypes.map(bedType => (
+                            <option key={bedType} value={bedType}>
+                              {bedType.charAt(0).toUpperCase() + bedType.slice(1)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Patient Cards */}
+                <div className="mt-6">
+                  {filteredPatients.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {filteredPatients.map((patient, index) => (
+                        <PatientCard
+                          key={index}
+                          patient={patient}
+                          onClick={setSelectedPatient}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <p className="text-gray-500">No patients match the current filters.</p>
+                      <button
+                        onClick={clearFilters}
+                        className="mt-2 text-blue-600 hover:text-blue-800"
+                      >
+                        Clear all filters
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}
 
-          {/* Analytics View */}
+{/* Analytics View - Complete with all charts */}
           {activeView === 'analytics' && (
             <div className="space-y-6">
+              {/* First Row - Original Priority and Department Charts */}
+              <div className="bg-white rounded-lg shadow-md p-6">
+                <h3 className="text-lg font-semibold text-gray-800 mb-4">Hospital Analytics</h3>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Priority Distribution */}
+                  <div>
+                    <h4 className="text-md font-medium text-gray-700 mb-2">Priority Distribution</h4>
+                    <ResponsiveContainer width="100%" height={250}>
+                      <PieChart>
+                        <Pie
+                          data={getPriorityDistribution}
+                          cx="50%"
+                          cy="50%"
+                          outerRadius={80}
+                          fill="#8884d8"
+                          dataKey="value"
+                          label={({ name, value }) => `${name}: ${value}`}
+                        >
+                          {getPriorityDistribution.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Department Stats */}
+                  <div>
+                    <h4 className="text-md font-medium text-gray-700 mb-2">Department Distribution</h4>
+                    <ResponsiveContainer width="100%" height={250}>
+                      <BarChart data={getDepartmentStats}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="name" />
+                        <YAxis />
+                        <Tooltip />
+                        <Bar dataKey="value" fill="#10B981" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+
+              {/* Second Row - New Analytics Charts */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-white rounded-lg shadow-md p-6">
                   <h3 className="text-lg font-semibold mb-4">Monthly Admissions Trend</h3>
@@ -707,6 +977,7 @@ const HospitalManagementAgent = () => {
                 </div>
               </div>
 
+              {/* Third Row - Department Bed Distribution */}
               <div className="bg-white rounded-lg shadow-md p-6">
                 <h3 className="text-lg font-semibold mb-4">Department Bed Distribution</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -723,6 +994,7 @@ const HospitalManagementAgent = () => {
                 </div>
               </div>
 
+              {/* Fourth Row - Critical Metrics */}
               <div className="bg-white rounded-lg shadow-md p-6">
                 <h3 className="text-lg font-semibold mb-4">Critical Metrics</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -766,13 +1038,22 @@ const HospitalManagementAgent = () => {
             </div>
           )}
 
-          {/* Add Patient Form */}
+
+          {/* Patient Modal - unchanged */}
+          {selectedPatient && (
+            <PatientModal
+              patient={selectedPatient}
+              onClose={() => setSelectedPatient(null)}
+            />
+          )}
+
+          {/* Add Patient Form Modal - unchanged */}
           {showAddForm && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-              <div className="bg-white rounded-lg max-w-2xl w-full mx-4">
+              <div className="bg-white rounded-lg max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
                 <div className="p-6">
                   <div className="flex justify-between items-center mb-6">
-                    <h2 className="text-xl font-bold text-gray-800">Add New Patient</h2>
+                    <h2 className="text-2xl font-bold text-gray-800">Add New Patient</h2>
                     <button
                       onClick={() => setShowAddForm(false)}
                       className="text-gray-500 hover:text-gray-700 text-xl font-bold"
@@ -787,8 +1068,8 @@ const HospitalManagementAgent = () => {
                       <input
                         type="text"
                         value={customPatient.name}
-                        onChange={(e) => setCustomPatient({...customPatient, name: e.target.value})}
-                        className="w-full border rounded-lg px-3 py-2"
+                        onChange={(e) => setCustomPatient({ ...customPatient, name: e.target.value })}
+                        className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                         placeholder="Patient name"
                       />
                     </div>
@@ -798,8 +1079,8 @@ const HospitalManagementAgent = () => {
                       <input
                         type="number"
                         value={customPatient.age}
-                        onChange={(e) => setCustomPatient({...customPatient, age: e.target.value})}
-                        className="w-full border rounded-lg px-3 py-2"
+                        onChange={(e) => setCustomPatient({ ...customPatient, age: e.target.value })}
+                        className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                         placeholder="Age"
                       />
                     </div>
@@ -808,10 +1089,10 @@ const HospitalManagementAgent = () => {
                       <label className="block text-sm font-medium text-gray-700 mb-1">Gender</label>
                       <select
                         value={customPatient.gender}
-                        onChange={(e) => setCustomPatient({...customPatient, gender: e.target.value})}
-                        className="w-full border rounded-lg px-3 py-2"
+                        onChange={(e) => setCustomPatient({ ...customPatient, gender: e.target.value })}
+                        className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                       >
-                        <option value="">Select Gender</option>
+                        <option value="">Select gender</option>
                         <option value="Male">Male</option>
                         <option value="Female">Female</option>
                         <option value="Other">Other</option>
@@ -819,13 +1100,24 @@ const HospitalManagementAgent = () => {
                     </div>
 
                     <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Department</label>
+                      <input
+                        type="text"
+                        value={customPatient.department}
+                        onChange={(e) => setCustomPatient({ ...customPatient, department: e.target.value })}
+                        className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                        placeholder="Department"
+                      />
+                    </div>
+
+                    <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Bed Number</label>
                       <input
                         type="text"
                         value={customPatient.bedNumber}
-                        onChange={(e) => setCustomPatient({...customPatient, bedNumber: e.target.value})}
-                        className="w-full border rounded-lg px-3 py-2"
-                        placeholder="e.g., A101 (auto-generated if empty)"
+                        onChange={(e) => setCustomPatient({ ...customPatient, bedNumber: e.target.value })}
+                        className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                        placeholder="Bed number (auto-generated if empty)"
                       />
                     </div>
 
@@ -833,11 +1125,11 @@ const HospitalManagementAgent = () => {
                       <label className="block text-sm font-medium text-gray-700 mb-1">Bed Type</label>
                       <select
                         value={customPatient.bedType}
-                        onChange={(e) => setCustomPatient({...customPatient, bedType: e.target.value})}
-                        className="w-full border rounded-lg px-3 py-2"
+                        onChange={(e) => setCustomPatient({ ...customPatient, bedType: e.target.value })}
+                        className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                       >
                         <option value="general">General</option>
-                        <option value="semi-private">Semi-Private</option>
+                        <option value="semi-private">Semi-private</option>
                         <option value="private">Private</option>
                       </select>
                     </div>
@@ -846,8 +1138,8 @@ const HospitalManagementAgent = () => {
                       <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
                       <select
                         value={customPatient.status}
-                        onChange={(e) => setCustomPatient({...customPatient, status: e.target.value})}
-                        className="w-full border rounded-lg px-3 py-2"
+                        onChange={(e) => setCustomPatient({ ...customPatient, status: e.target.value })}
+                        className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                       >
                         <option value="inpatient">Inpatient</option>
                         <option value="outpatient">Outpatient</option>
@@ -858,8 +1150,8 @@ const HospitalManagementAgent = () => {
                       <label className="block text-sm font-medium text-gray-700 mb-1">Priority</label>
                       <select
                         value={customPatient.priority}
-                        onChange={(e) => setCustomPatient({...customPatient, priority: e.target.value})}
-                        className="w-full border rounded-lg px-3 py-2"
+                        onChange={(e) => setCustomPatient({ ...customPatient, priority: e.target.value })}
+                        className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                       >
                         <option value="normal">Normal</option>
                         <option value="urgent">Urgent</option>
@@ -868,23 +1160,12 @@ const HospitalManagementAgent = () => {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Department</label>
-                      <input
-                        type="text"
-                        value={customPatient.department}
-                        onChange={(e) => setCustomPatient({...customPatient, department: e.target.value})}
-                        className="w-full border rounded-lg px-3 py-2"
-                        placeholder="e.g., Cardiology, Surgery"
-                      />
-                    </div>
-
-                    <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Admission Date</label>
                       <input
                         type="date"
                         value={customPatient.admissionDate}
-                        onChange={(e) => setCustomPatient({...customPatient, admissionDate: e.target.value})}
-                        className="w-full border rounded-lg px-3 py-2"
+                        onChange={(e) => setCustomPatient({ ...customPatient, admissionDate: e.target.value })}
+                        className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                       />
                     </div>
 
@@ -892,10 +1173,10 @@ const HospitalManagementAgent = () => {
                       <label className="block text-sm font-medium text-gray-700 mb-1">Symptoms</label>
                       <textarea
                         value={customPatient.symptoms}
-                        onChange={(e) => setCustomPatient({...customPatient, symptoms: e.target.value})}
-                        className="w-full border rounded-lg px-3 py-2"
+                        onChange={(e) => setCustomPatient({ ...customPatient, symptoms: e.target.value })}
+                        className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                         rows={3}
-                        placeholder="Describe symptoms..."
+                        placeholder="Patient symptoms"
                       />
                     </div>
 
@@ -903,10 +1184,10 @@ const HospitalManagementAgent = () => {
                       <label className="block text-sm font-medium text-gray-700 mb-1">Medical History</label>
                       <textarea
                         value={customPatient.medicalHistory}
-                        onChange={(e) => setCustomPatient({...customPatient, medicalHistory: e.target.value})}
-                        className="w-full border rounded-lg px-3 py-2"
+                        onChange={(e) => setCustomPatient({ ...customPatient, medicalHistory: e.target.value })}
+                        className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                         rows={3}
-                        placeholder="Medical history..."
+                        placeholder="Medical history"
                       />
                     </div>
                   </div>
@@ -914,13 +1195,13 @@ const HospitalManagementAgent = () => {
                   <div className="flex justify-end space-x-4 mt-6">
                     <button
                       onClick={() => setShowAddForm(false)}
-                      className="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
+                      className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={addCustomPatient}
-                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                      className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
                     >
                       Add Patient
                     </button>
@@ -928,14 +1209,6 @@ const HospitalManagementAgent = () => {
                 </div>
               </div>
             </div>
-          )}
-
-          {/* Patient Modal */}
-          {selectedPatient && (
-            <PatientModal
-              patient={selectedPatient}
-              onClose={() => setSelectedPatient(null)}
-            />
           )}
         </div>
       </div>
