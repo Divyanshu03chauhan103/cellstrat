@@ -48,8 +48,6 @@
 - ✅ **Multi-Agent System** – Distributed AI workflows (LangChain, CrewAI)
 - ✅ **Vector Databases** – FAISS / ChromaDB / Weaviate
 - ✅ **Web Scraping** – Real-time structured data extraction
-- ✅ **Natural Language Processing (NLP)** – spaCy, NLTK
-- ✅ **Task Queue & Orchestration** – Celery + Redis
 
 ---
 
@@ -59,13 +57,12 @@
 
 | Category        | Tools/Frameworks |
 |----------------|------------------|
-| Agents & LLMs  | LangChain, CrewAI, Hugging Face Transformers |
+| Agents & LLMs  | Hugging Face Transformers |
 | Backend        | FastAPI |
 | Frontend       | React.js, TypeScript |
-| NLP            | spaCy, NLTK |
 | Data Handling  | Pandas, OpenPyXL |
 | Deployment     | Docker |
-| Orchestration  | Celery, Redis |
+| Orchestration  | LangChain, CrewAI  |
 
 ---
 
